@@ -12,13 +12,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Code
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 20
 
       - name: Setup Java JDK
         uses: actions/setup-java@v4
@@ -26,19 +26,30 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
-      - name: Initialize Capacitor Project
+      - name: Prepare Workspace & Package Config
         run: |
-          npm init -y
-          npm install @capacitor/core @capacitor/cli @capacitor/android
-          npx cap init "Pollyben Medical Kitty" "com.pollyben.medicalkitty" --web-dir "."
+          mkdir -p www
+          cp index.html www/
+          cat << 'EOF' > package.json
+          {
+            "name": "pollyben-medical-kitty",
+            "version": "1.0.0",
+            "private": true
+          }
+          EOF
+
+      - name: Install Capacitor & Generate Android Project
+        run: |
+          npm install @capacitor/core@5 @capacitor/cli@5 @capacitor/android@5
+          npx cap init "Pollyben Medical Kitty" "com.pollyben.medicalkitty" --web-dir "www"
           npx cap add android
           npx cap sync android
 
-      - name: Build Unsigned Debug APK
+      - name: Build Debug APK
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleDebug
+          ./gradlew assembleDebug --no-daemon
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
