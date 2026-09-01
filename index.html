@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#2563eb">
+  <title>Pollyben Medical Kitty Tracker</title>
+  
+  <script src="https://unpkg.com/dexie/dist/dexie.js"></script>
+  
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  
+  <style>
+    :root {
+      --primary: #2563eb;
+      --success: #16a34a;
+      --danger: #dc2626;
+      --whatsapp: #25d366;
+      --bg: #f8fafc;
+      --card-bg: #ffffff;
+      --text: #0f172a;
+    }
+
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background-color: var(--bg);
+      color: var(--text);
+      max-width: 850px;
+      margin: 0 auto;
+      padding: 12px 12px 90px 12px;
+    }
+
+    .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+    .header-title { display: flex; align-items: center; gap: 10px; }
+    .header-icon {
+      width: 40px; height: 40px; background: #dbeafe; color: var(--primary);
+      border-radius: 10px; display: grid; place-items: center; font-size: 20px;
+    }
+
+    .badge-offline {
+      background: #e2e8f0; color: #475569; font-size: 0.75rem; font-weight: 700;
+      padding: 4px 8px; border-radius: 12px; display: inline-flex; align-items: center; gap: 4px;
+    }
+
+    .card {
+      background: var(--card-bg); border: 1px solid #e2e8f0;
+      border-radius: 12px; padding: 16px; margin-bottom: 16px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+
+    .metrics-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+      gap: 10px; margin-bottom: 16px;
+    }
+
+    .metric-card {
+      background: var(--card-bg); border: 1px solid #e2e8f0;
+      border-radius: 10px; padding: 12px; display: flex; flex-direction: column;
+    }
+
+    .metric-val { font-size: 1.25rem; font-weight: 700; margin-top: 4px; }
+    .metric-label { font-size: 0.75rem; color: #64748b; text-transform: uppercase; font-weight: 600; }
+
+    .progress-bar-bg { height: 10px; background: #e2e8f0; border-radius: 5px; overflow: hidden; display: flex; }
+    .progress-fill-claim { background: var(--danger); height: 100%; transition: width 0.3s; }
+    .progress-fill-reserve { background: var(--success); height: 100%; transition: width 0.3s; }
+    .legend { display: flex; justify-content: space-between; font-size: 0.75rem; color: #64748b; margin-top: 6px; }
+
+    form { display: flex; flex-direction: column; gap: 12px; }
+    input, select { padding: 12px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 1rem; width: 100%; }
+
+    .btn {
+      padding: 12px 16px; border-radius: 8px; font-weight: 600; cursor: pointer; border: none;
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px; font-size: 0.9rem;
+      min-height: 44px; touch-action: manipulation;
+    }
+
+    .btn:active { transform: scale(0.98); }
+    .btn-primary { background: var(--primary); color: white; }
+    .btn-secondary { background: #475569; color: white; }
+    .btn-whatsapp { background: var(--whatsapp); color: white; font-weight: 700; }
+    .btn-outline { background: transparent; border: 1px solid #cbd5e1; color: var(--text); }
+    .btn-danger { background: var(--danger); color: white; }
+    .btn-sm { padding: 6px 10px; font-size: 0.8rem; min-height: 32px; }
+
+    .mobile-bottom-bar {
+      position: fixed; bottom: 0; left: 0; right: 0; background: #ffffff;
+      border-top: 1px solid #e2e8f0; padding: 8px 12px; display: flex; gap: 6px;
+      box-shadow: 0 -2px 10px rgba(0,0,0,0.05); z-index: 1000;
+    }
+
+    .mobile-bottom-bar .btn { flex: 1; padding: 6px; font-size: 0.75rem; flex-direction: column; gap: 2px; }
+
+    .table-container { overflow-x: auto; -webkit-overflow-scrolling: touch; margin-top: 8px; }
+    table { width: 100%; border-collapse: collapse; min-width: 580px; }
+    th, td { padding: 10px 8px; text-align: left; border-bottom: 1px solid #f1f5f9; font-size: 0.875rem; }
+    th { color: #64748b; font-weight: 600; }
+
+    .badge { padding: 4px 6px; border-radius: 4px; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; }
+    .badge-in { background: #dcfce7; color: var(--success); }
+    .badge-out { background: #fee2e2; color: var(--danger); }
+    .table-actions { display: flex; gap: 4px; }
+
+    .summary-preview {
+      background: #f1f5f9; border: 1px solid #cbd5e1; border-radius: 8px;
+      padding: 12px; font-family: monospace; font-size: 0.85rem; white-space: pre-wrap;
+      max-height: 180px; overflow-y: auto; margin-bottom: 12px;
+    }
+
+    .modal {
+      display: none; position: fixed; z-index: 2000; left: 0; top: 0; width: 100%; height: 100%;
+      background-color: rgba(0,0,0,0.8); align-items: center; justify-content: center; padding: 16px;
+    }
+    .modal-content { max-width: 90%; max-height: 80%; border-radius: 8px; }
+    .modal-close { position: absolute; top: 20px; right: 20px; color: white; font-size: 28px; font-weight: bold; cursor: pointer; }
+
+    /* Edit Mode Banner */
+    .edit-mode-banner {
+      background-color: #fef3c7; border: 1px solid #f59e0b; color: #92400e;
+      padding: 10px; border-radius: 8px; margin-bottom: 12px; display: none;
+      justify-content: space-between; align-items: center; font-size: 0.875rem;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <div class="header-title">
+      <div class="header-icon">🏥</div>
+      <div>
+        <h2 style="margin:0; font-size: 1.3rem;">Pollyben Medical Kitty</h2>
+        <span class="badge-offline">💾 Web-Based Local Storage</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="metrics-grid">
+    <div class="metric-card">
+      <div class="metric-label">Raised</div>
+      <div class="metric-val" style="color: var(--success);" id="totalIn">0.00</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Claims</div>
+      <div class="metric-val" style="color: var(--danger);" id="totalOut">0.00</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Net Reserve</div>
+      <div class="metric-val" style="color: var(--primary);" id="netBalance">0.00</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="progress-bar-bg">
+      <div id="claimBar" class="progress-fill-claim" style="width: 0%;"></div>
+      <div id="reserveBar" class="progress-fill-reserve" style="width: 100%;"></div>
+    </div>
+    <div class="legend">
+      <span>🔴 Claims Paid: <strong id="claimPct">0%</strong></span>
+      <span>🟢 Available Reserve: <strong id="reservePct">100%</strong></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top: 0; font-size: 1.1rem;">💬 WhatsApp Statement Generator</h3>
+    <div id="summaryBox" class="summary-preview">Generating statement...</div>
+    <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+      <button class="btn btn-whatsapp" style="flex: 1;" onclick="shareWhatsAppGroupLink()">📲 Share Report to WhatsApp</button>
+      <button class="btn btn-outline" onclick="copyWhatsAppLink()">🔗 Copy Link</button>
+    </div>
+  </div>
+
+  <div class="card" id="formSection">
+    <div id="editBanner" class="edit-mode-banner">
+      <span>✏️ <strong>Editing Entry</strong> (<span id="editIdDisplay"></span>)</span>
+      <button class="btn btn-outline btn-sm" onclick="cancelEdit()">Cancel Edit</button>
+    </div>
+
+    <h3 style="margin-top: 0; font-size: 1.1rem;" id="formTitle">Record Transaction</h3>
+    <form id="kittyForm">
+      <input type="hidden" id="editId" value="">
+      <select id="type" required>
+        <option value="contribution">Contribution (Money In)</option>
+        <option value="claim">Medical Claim (Money Out)</option>
+      </select>
+      <input type="text" id="person" placeholder="Member / Beneficiary Name" required autocomplete="off">
+      <input type="number" id="amount" placeholder="Amount (KES)" step="0.01" inputmode="decimal" required>
+      <input type="text" id="note" placeholder="Notes (e.g. Hospital bill, Monthly fee)">
+      
+      <div>
+        <label style="font-size: 0.8rem; color: #64748b; display: block; margin-bottom: 4px;">Upload Receipt Image</label>
+        <input type="file" id="receiptInput" accept="image/*">
+      </div>
+
+      <button type="submit" id="submitBtn" class="btn btn-primary">Save Entry</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top: 0; font-size: 1.1rem;">Ledger History</h3>
+    <div class="table-container">
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Type</th>
+            <th>Name</th>
+            <th>Notes</th>
+            <th>Amount</th>
+            <th>Receipt</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody id="ledgerBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="mobile-bottom-bar">
+    <button class="btn btn-whatsapp" onclick="shareWhatsAppGroupLink()">
+      <span>💬</span><span>WA Link</span>
+    </button>
+    <button class="btn btn-primary" onclick="backupJSON()">
+      <span>💾</span><span>Backup</span>
+    </button>
+    <button class="btn btn-outline" onclick="document.getElementById('importStatementFile').click()">
+      <span>📥</span><span>Import</span>
+    </button>
+    <button class="btn btn-secondary" onclick="exportToCSV()">
+      <span>📊</span><span>Export</span>
+    </button>
+    <button class="btn btn-outline" onclick="document.getElementById('importBackupFile').click()">
+      <span>📂</span><span>Restore DB</span>
+    </button>
+
+    <input type="file" id="importBackupFile" accept=".json" style="display:none;" onchange="restoreJSON(event)">
+    <input type="file" id="importStatementFile" accept=".csv, .xlsx, .xls" style="display:none;" onchange="importStatementData(event)">
+  </div>
+
+  <div id="imageModal" class="modal">
+    <span class="modal-close" onclick="closeModal()">&times;</span>
+    <img class="modal-content" id="modalImg">
+  </div>
+
+  <script>
+    // Initialize Dexie IndexedDB
+    const db = new Dexie("PollybenMedicalKittyLocalDB");
+    db.version(1).stores({
+      transactions: '++id, date, type, person, amount, note, receipt'
+    });
+
+    const form = document.getElementById('kittyForm');
+
+    async function updateDashboard() {
+      const records = await db.transactions.toArray();
+      const tbody = document.getElementById('ledgerBody');
+      tbody.innerHTML = '';
+
+      let totalIn = 0;
+      let totalOut = 0;
+
+      records.reverse().forEach(r => {
+        if (r.type === 'contribution') totalIn += r.amount;
+        if (r.type === 'claim') totalOut += r.amount;
+
+        const row = document.createElement('tr');
+        const badgeClass = r.type === 'contribution' ? 'badge-in' : 'badge-out';
+        const label = r.type === 'contribution' ? 'IN' : 'OUT';
+        const receiptBtn = r.receipt ? `<button class="btn btn-outline btn-sm" onclick="viewReceipt(${r.id})">🖼️ View</button>` : '-';
+
+        row.innerHTML = `
+          <td>${new Date(r.date).toLocaleDateString(undefined, {month:'numeric', day:'numeric'})}</td>
+          <td><span class="badge ${badgeClass}">${label}</span></td>
+          <td><strong>${r.person}</strong></td>
+          <td>${r.note || '-'}</td>
+          <td>${r.amount.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+          <td>${receiptBtn}</td>
+          <td class="table-actions">
+            <button class="btn btn-whatsapp btn-sm" onclick="shareSingleItemWhatsAppLink(${r.id})">💬 Link</button>
+            <button class="btn btn-outline btn-sm" onclick="editRecord(${r.id})">✏️</button>
+            <button class="btn btn-danger btn-sm" onclick="deleteRecord(${r.id})">🗑️</button>
+          </td>
+        `;
+        tbody.appendChild(row);
+      });
+
+      const net = totalIn - totalOut;
+      document.getElementById('totalIn').innerText = totalIn.toLocaleString(undefined, {minimumFractionDigits: 2});
+      document.getElementById('totalOut').innerText = totalOut.toLocaleString(undefined, {minimumFractionDigits: 2});
+      document.getElementById('netBalance').innerText = net.toLocaleString(undefined, {minimumFractionDigits: 2});
+
+      let claimRatio = totalIn > 0 ? (totalOut / totalIn) * 100 : 0;
+      if (claimRatio > 100) claimRatio = 100;
+      const reserveRatio = 100 - claimRatio;
+
+      document.getElementById('claimBar').style.width = `${claimRatio}%`;
+      document.getElementById('reserveBar').style.width = `${reserveRatio}%`;
+      document.getElementById('claimPct').innerText = `${claimRatio.toFixed(1)}%`;
+      document.getElementById('reservePct').innerText = `${reserveRatio.toFixed(1)}%`;
+
+      updateSummaryPreview(records, totalIn, totalOut, net);
+    }
+
+    // Save or Update Entry
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const editId = document.getElementById('editId').value;
+      const receiptFile = document.getElementById('receiptInput').files[0];
+      let receiptBase64 = null;
+
+      if (receiptFile) {
+        receiptBase64 = await convertFileToBase64(receiptFile);
+      }
+
+      const recordData = {
+        type: document.getElementById('type').value,
+        person: document.getElementById('person').value,
+        amount: parseFloat(document.getElementById('amount').value),
+        note: document.getElementById('note').value
+      };
+
+      if (receiptBase64) recordData.receipt = receiptBase64;
+
+      if (editId) {
+        await db.transactions.update(parseInt(editId), recordData);
+        cancelEdit();
+      } else {
+        recordData.date = new Date().toISOString();
+        await db.transactions.add(recordData);
+        form.reset();
+      }
+
+      updateDashboard();
+    });
+
+    function convertFileToBase64(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = error => reject(error);
+      });
+    }
+
+    async function editRecord(id) {
+      const record = await db.transactions.get(id);
+      if (!record) return;
+
+      document.getElementById('editId').value = record.id;
+      document.getElementById('type').value = record.type;
+      document.getElementById('person').value = record.person;
+      document.getElementById('amount').value = record.amount;
+      document.getElementById('note').value = record.note || '';
+
+      document.getElementById('formTitle').innerText = "Update Transaction";
+      document.getElementById('submitBtn').innerText = "Save Changes";
+      document.getElementById('editIdDisplay').innerText = record.id;
+      document.getElementById('editBanner').style.display = 'flex';
+
+      document.getElementById('formSection').scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function cancelEdit() {
+      document.getElementById('editId').value = '';
+      form.reset();
+      document.getElementById('formTitle').innerText = "Record Transaction";
+      document.getElementById('submitBtn').innerText = "Save Entry";
+      document.getElementById('editBanner').style.display = 'none';
+    }
+
+    async function viewReceipt(id) {
+      const record = await db.transactions.get(id);
+      if (record && record.receipt) {
+        document.getElementById('modalImg').src = record.receipt;
+        document.getElementById('imageModal').style.display = 'flex';
+      }
+    }
+
+    function closeModal() {
+      document.getElementById('imageModal').style.display = 'none';
+    }
+
+    async function deleteRecord(id) {
+      if (confirm("Delete this entry?")) {
+        await db.transactions.delete(id);
+        if (document.getElementById('editId').value == id) cancelEdit();
+        updateDashboard();
+      }
+    }
+
+    // WhatsApp Statement Logic
+    function updateSummaryPreview(records, totalIn, totalOut, net) {
+      const today = new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+      let text = `🏥 *POLLYBEN MEDICAL KITTY STATEMENT*\n📅 *As of:* ${today}\n`;
+      text += `===============================\n`;
+      text += `💰 *Total Contributions:* KES ${totalIn.toLocaleString(undefined, {minimumFractionDigits: 2})}\n`;
+      text += `🔴 *Medical Claims Paid:* KES ${totalOut.toLocaleString(undefined, {minimumFractionDigits: 2})}\n`;
+      text += `🛡️ *Available Reserve:* KES ${net.toLocaleString(undefined, {minimumFractionDigits: 2})}\n`;
+      text += `===============================\n\n`;
+      text += `📋 *RECENT LOGS:*\n`;
+      records.slice(0, 5).forEach((r, idx) => {
+        const tag = r.type === 'contribution' ? '🟢 IN' : '🔴 OUT';
+        text += `${idx + 1}. [${tag}] *${r.person}*: KES ${r.amount.toLocaleString(undefined, {minimumFractionDigits: 2})}\n`;
+      });
+      document.getElementById('summaryBox').innerText = text;
+    }
+
+    function shareWhatsAppGroupLink() {
+      const text = document.getElementById('summaryBox').innerText;
+      window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`, '_blank');
+    }
+
+    async function copyWhatsAppLink() {
+      const text = document.getElementById('summaryBox').innerText;
+      const url = `https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`;
+      await navigator.clipboard.writeText(url);
+      alert('WhatsApp sharing link copied to clipboard!');
+    }
+
+    async function shareSingleItemWhatsAppLink(id) {
+      const r = await db.transactions.get(id);
+      if (!r) return;
+      let msg = `🏥 *Medical Kitty Notice*\n• *Type:* ${r.type === 'contribution' ? 'Contribution' : 'Claim'}\n• *Name:* ${r.person}\n• *Amount:* KES ${r.amount.toLocaleString(undefined, {minimumFractionDigits: 2})}\n• *Note:* ${r.note || 'N/A'}\n`;
+      window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(msg)}`, '_blank');
+    }
+
+    // CSV Export & JSON Backup
+    async function exportToCSV() {
+      const records = await db.transactions.toArray();
+      if (records.length === 0) return alert("No records available.");
+      let csvContent = "data:text/csv;charset=utf-8,ID,Date,Type,Person,Amount,Note\n";
+      records.forEach(r => {
+        csvContent += `${r.id},${r.date},${r.type},"${r.person}",${r.amount},"${r.note || ''}"\n`;
+      });
+      const link = document.createElement("a");
+      link.setAttribute("href", encodeURI(csvContent));
+      link.setAttribute("download", `Pollyben_Kitty_Ledger_${new Date().toISOString().slice(0,10)}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+
+    async function backupJSON() {
+      const records = await db.transactions.toArray();
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(records, null, 2));
+      const link = document.createElement("a");
+      link.setAttribute("href", dataStr);
+      link.setAttribute("download", `Pollyben_Kitty_Backup_${new Date().toISOString().slice(0,10)}.json`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+
+    function restoreJSON(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = async function(e) {
+        try {
+          const importedData = JSON.parse(e.target.result);
+          if (Array.isArray(importedData)) {
+            if (confirm("Restore database from JSON backup?")) {
+              await db.transactions.bulkPut(importedData);
+              alert("Data restored!");
+              updateDashboard();
+            }
+          }
+        } catch (err) { alert("Invalid backup format."); }
+      };
+      reader.readAsText(file);
+    }
+
+    function importStatementData(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      const fileName = file.name.toLowerCase();
+
+      if (fileName.endsWith('.csv')) {
+        Papa.parse(file, {
+          header: true, skipEmptyLines: true,
+          complete: async function(results) { await processParsedData(results.data); }
+        });
+      } else if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
+        const reader = new FileReader();
+        reader.onload = async function(e) {
+          const data = new Uint8Array(e.target.result);
+          const workbook = XLSX.read(data, { type: 'array' });
+          const sheetData = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]]);
+          await processParsedData(sheetData);
+        };
+        reader.readAsArrayBuffer(file);
+      }
+    }
+
+    async function processParsedData(rows) {
+      const formatted = [];
+      rows.forEach(r => {
+        const typeStr = (r.Type || r.type || '').toString().toLowerCase();
+        const type = (typeStr.includes('claim') || typeStr.includes('out')) ? 'claim' : 'contribution';
+        const person = r.Person || r.person || r['Person/Beneficiary'] || r.Name || r.name || 'Unknown';
+        const amount = parseFloat(r.Amount || r.amount || 0);
+        const note = r.Note || r.note || r.Notes || '';
+        const date = r.Date || r.date ? new Date(r.Date || r.date).toISOString() : new Date().toISOString();
+
+        if (amount > 0) formatted.push({ date, type, person, amount, note, receipt: null });
+      });
+
+      if (formatted.length > 0) {
+        await db.transactions.bulkAdd(formatted);
+        alert(`Successfully imported ${formatted.length} records!`);
+        updateDashboard();
+      }
+    }
+
+    // Run Dashboard on Load
+    updateDashboard();
+  </script>
+</body>
+</html>
