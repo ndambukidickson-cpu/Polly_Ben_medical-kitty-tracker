@@ -246,7 +246,7 @@
   </div>
 
   <script>
-    // PRE-FILLED FIREBASE CONFIGURATION
+    // FIREBASE CONFIGURATION
     const firebaseConfig = {
       apiKey: "AIzaSyBaUQvsZI2PS9MgaeIKg08fQ7LR3KmXs78",
       authDomain: "pollyben-medical-tracker.firebaseapp.com",
@@ -258,13 +258,20 @@
 
     firebase.initializeApp(firebaseConfig);
     const db = firebase.firestore();
-    const collectionRef = db.collection("medical_kitty");
 
+    // FORCE DIRECT LIVE NETWORK SYNC (DISABLE STALE PERSISTENT CACHE)
+    db.settings({
+      host: "firestore.googleapis.com",
+      ssl: true,
+      cacheSizeBytes: firebase.firestore.CACHE_SIZE_UNLIMITED
+    });
+
+    const collectionRef = db.collection("medical_kitty");
     const form = document.getElementById('kittyForm');
     let localRecords = [];
 
-    // Realtime Sync Listener
-    collectionRef.orderBy("date", "desc").onSnapshot(snapshot => {
+    // REAL-TIME LISTENER (FORCES DIRECT SERVER SYNC)
+    collectionRef.orderBy("date", "desc").onSnapshot({ includeMetadataChanges: true }, snapshot => {
       localRecords = [];
       const tbody = document.getElementById('ledgerBody');
       tbody.innerHTML = '';
@@ -276,20 +283,26 @@
         const r = { id: doc.id, ...doc.data() };
         localRecords.push(r);
 
-        if (r.type === 'contribution') totalIn += r.amount;
-        if (r.type === 'claim') totalOut += r.amount;
+        // Normalize potential field casing variations
+        const amount = parseFloat(r.amount || r.Amount || 0);
+        const type = (r.type || r.Type || '').toLowerCase();
+        const person = r.person || r.Person || 'Unknown';
+        const note = r.note || r.Note || '';
+
+        if (type === 'contribution' || type === 'in') totalIn += amount;
+        if (type === 'claim' || type === 'out') totalOut += amount;
 
         const row = document.createElement('tr');
-        const badgeClass = r.type === 'contribution' ? 'badge-in' : 'badge-out';
-        const label = r.type === 'contribution' ? 'IN' : 'OUT';
+        const badgeClass = (type === 'contribution' || type === 'in') ? 'badge-in' : 'badge-out';
+        const label = (type === 'contribution' || type === 'in') ? 'IN' : 'OUT';
         const receiptBtn = r.receipt ? `<button class="btn btn-outline btn-sm" onclick="viewReceipt('${r.id}')">🖼️ View</button>` : '-';
 
         row.innerHTML = `
           <td>${new Date(r.date).toLocaleDateString(undefined, {month:'numeric', day:'numeric'})}</td>
           <td><span class="badge ${badgeClass}">${label}</span></td>
-          <td><strong>${r.person}</strong></td>
-          <td>${r.note || '-'}</td>
-          <td>${r.amount.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+          <td><strong>${person}</strong></td>
+          <td>${note || '-'}</td>
+          <td>${amount.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
           <td>${receiptBtn}</td>
           <td class="table-actions">
             <button class="btn btn-whatsapp btn-sm" onclick="shareSingleItemWhatsAppLink('${r.id}')">💬 Link</button>
@@ -317,7 +330,7 @@
       updateSummaryPreview(totalIn, totalOut, net);
     }, error => {
       console.error("Firestore error:", error);
-      document.getElementById('summaryBox').innerText = "Database connection error. Ensure Firestore rules are set to Allow Read/Write.";
+      document.getElementById('summaryBox').innerText = "Database connection error. Ensure Firestore rules allow read/write.";
     });
 
     // Save or Update Entry
@@ -364,10 +377,10 @@
       if (!record) return;
 
       document.getElementById('editId').value = record.id;
-      document.getElementById('type').value = record.type;
-      document.getElementById('person').value = record.person;
-      document.getElementById('amount').value = record.amount;
-      document.getElementById('note').value = record.note || '';
+      document.getElementById('type').value = record.type || record.Type;
+      document.getElementById('person').value = record.person || record.Person;
+      document.getElementById('amount').value = record.amount || record.Amount;
+      document.getElementById('note').value = record.note || record.Note || '';
 
       document.getElementById('formTitle').innerText = "Update Transaction";
       document.getElementById('submitBtn').innerText = "Save Changes";
@@ -415,8 +428,11 @@
       text += `===============================\n\n`;
       text += `📋 *RECENT LOGS:*\n`;
       localRecords.slice(0, 5).forEach((r, idx) => {
-        const tag = r.type === 'contribution' ? '🟢 IN' : '🔴 OUT';
-        text += `${idx + 1}. [${tag}] *${r.person}*: KES ${r.amount.toLocaleString(undefined, {minimumFractionDigits: 2})}\n`;
+        const type = (r.type || r.Type || '').toLowerCase();
+        const tag = (type === 'contribution' || type === 'in') ? '🟢 IN' : '🔴 OUT';
+        const person = r.person || r.Person || 'Unknown';
+        const amount = parseFloat(r.amount || r.Amount || 0);
+        text += `${idx + 1}. [${tag}] *${person}*: KES ${amount.toLocaleString(undefined, {minimumFractionDigits: 2})}\n`;
       });
       document.getElementById('summaryBox').innerText = text;
     }
@@ -436,7 +452,11 @@
     function shareSingleItemWhatsAppLink(id) {
       const r = localRecords.find(item => item.id === id);
       if (!r) return;
-      let msg = `🏥 *Medical Kitty Notice*\n• *Type:* ${r.type === 'contribution' ? 'Contribution' : 'Claim'}\n• *Name:* ${r.person}\n• *Amount:* KES ${r.amount.toLocaleString(undefined, {minimumFractionDigits: 2})}\n• *Note:* ${r.note || 'N/A'}\n`;
+      const type = (r.type || r.Type || '').toLowerCase();
+      const person = r.person || r.Person || 'Unknown';
+      const amount = parseFloat(r.amount || r.Amount || 0);
+      const note = r.note || r.Note || 'N/A';
+      let msg = `🏥 *Medical Kitty Notice*\n• *Type:* ${type === 'contribution' ? 'Contribution' : 'Claim'}\n• *Name:* ${person}\n• *Amount:* KES ${amount.toLocaleString(undefined, {minimumFractionDigits: 2})}\n• *Note:* ${note}\n`;
       window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(msg)}`, '_blank');
     }
 
@@ -445,7 +465,7 @@
       if (localRecords.length === 0) return alert("No records available.");
       let csvContent = "data:text/csv;charset=utf-8,ID,Date,Type,Person,Amount,Note\n";
       localRecords.forEach(r => {
-        csvContent += `${r.id},${r.date},${r.type},"${r.person}",${r.amount},"${r.note || ''}"\n`;
+        csvContent += `${r.id},${r.date},${r.type || r.Type},"${r.person || r.Person}",${r.amount || r.Amount},"${r.note || r.Note || ''}"\n`;
       });
       const link = document.createElement("a");
       link.setAttribute("href", encodeURI(csvContent));
