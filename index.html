@@ -139,7 +139,7 @@
       <div class="header-icon">🏥</div>
       <div>
         <h2 style="margin:0; font-size: 1.3rem;">Pollyben Medical Kitty</h2>
-        <span class="sync-badge">🟢 Realtime & Offline Persistence Active</span>
+        <span class="sync-badge">🟢 Realtime & JSON Backup Ready</span>
       </div>
     </div>
   </div>
@@ -246,14 +246,23 @@
   <!-- Mobile Bottom Action Toolbar -->
   <div class="mobile-bottom-bar">
     <button class="btn btn-whatsapp" onclick="shareWhatsAppGroupLink()">
-      <span>💬</span><span>WA Link</span>
+      <span>💬</span><span>WA</span>
+    </button>
+    <button class="btn btn-primary" onclick="exportToJSON()">
+      <span>💾</span><span>Save JSON</span>
+    </button>
+    <button class="btn btn-outline" onclick="document.getElementById('importBackupJSONFile').click()">
+      <span>📂</span><span>Load JSON</span>
     </button>
     <button class="btn btn-outline" onclick="document.getElementById('importStatementFile').click()">
-      <span>📥</span><span>Import</span>
+      <span>📥</span><span>CSV/XLS</span>
     </button>
     <button class="btn btn-secondary" onclick="exportToCSV()">
-      <span>📊</span><span>Export</span>
+      <span>📊</span><span>CSV</span>
     </button>
+
+    <!-- Hidden Input Handlers -->
+    <input type="file" id="importBackupJSONFile" accept=".json" style="display:none;" onchange="importJSONBackup(event)">
     <input type="file" id="importStatementFile" accept=".csv, .xlsx, .xls" style="display:none;" onchange="importStatementData(event)">
   </div>
 
@@ -277,27 +286,19 @@
     firebase.initializeApp(firebaseConfig);
     const db = firebase.firestore();
 
-    // FIRESTORE OFFLINE PERSISTENCE FLAGS
     db.settings({
       cacheSizeBytes: firebase.firestore.CACHE_SIZE_UNLIMITED
     });
 
-    // ENABLE MULTI-TAB & MOBILE HYBRID PERSISTENCE
     firebase.firestore().enablePersistence({ synchronizeTabs: true })
       .then(() => console.log("Offline persistence enabled."))
-      .catch(err => {
-        if (err.code == 'failed-precondition') {
-          console.warn('Multiple tabs open, persistence enabled in first tab only.');
-        } else if (err.code == 'unimplemented') {
-          console.warn('The current browser does not support offline persistence.');
-        }
-      });
+      .catch(err => console.warn("Persistence status:", err.code));
 
     const collectionRef = db.collection("medical_kitty");
     const form = document.getElementById('kittyForm');
     let localRecords = [];
 
-    // REAL-TIME LISTENER WITH OFFLINE CACHE SYNC
+    // REAL-TIME LISTENER
     collectionRef.orderBy("date", "desc").onSnapshot({ includeMetadataChanges: true }, snapshot => {
       localRecords = [];
       const tbody = document.getElementById('ledgerBody');
@@ -358,6 +359,52 @@
       console.error("Firestore error:", error);
       document.getElementById('summaryBox').innerText = "Database connection error. Ensure Firestore rules allow read/write.";
     });
+
+    // JSON EXPORT & IMPORT ENGINE
+    function exportToJSON() {
+      if (localRecords.length === 0) return alert("No records available to export.");
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(localRecords, null, 2));
+      const link = document.createElement("a");
+      link.setAttribute("href", dataStr);
+      link.setAttribute("download", `Pollyben_Kitty_Backup_${new Date().toISOString().slice(0,10)}.json`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+
+    function importJSONBackup(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = async function(e) {
+        try {
+          const records = JSON.parse(e.target.result);
+          if (!Array.isArray(records)) return alert("Invalid JSON format. Expected an array of transaction records.");
+
+          if (confirm(`Import and sync ${records.length} records into Firebase database?`)) {
+            const batch = db.batch();
+            records.forEach(r => {
+              const docRef = collectionRef.doc();
+              batch.set(docRef, {
+                date: r.date || new Date().toISOString(),
+                type: (r.type || r.Type || 'contribution').toLowerCase(),
+                person: r.person || r.Person || 'Unknown',
+                amount: parseFloat(r.amount || r.Amount || 0),
+                note: r.note || r.Note || '',
+                receipt: r.receipt || null
+              });
+            });
+
+            await batch.commit();
+            alert(`Successfully imported ${records.length} records to cloud database!`);
+          }
+        } catch (err) {
+          alert("Error parsing JSON file. Please ensure it is a valid backup file.");
+        }
+      };
+      reader.readAsText(file);
+    }
 
     // SMS PARSER ENGINE
     async function parseAndLogSMS() {
