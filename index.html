@@ -73,7 +73,7 @@
     .legend { display: flex; justify-content: space-between; font-size: 0.75rem; color: #64748b; margin-top: 6px; }
 
     form { display: flex; flex-direction: column; gap: 12px; }
-    input, select { padding: 12px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 1rem; width: 100%; }
+    input, select, textarea { padding: 12px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 1rem; width: 100%; }
 
     .btn {
       padding: 12px 16px; border-radius: 8px; font-weight: 600; cursor: pointer; border: none;
@@ -125,6 +125,11 @@
       padding: 10px; border-radius: 8px; margin-bottom: 12px; display: none;
       justify-content: space-between; align-items: center; font-size: 0.875rem;
     }
+
+    .sms-box {
+      background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px;
+      padding: 12px; margin-bottom: 12px; display: flex; flex-direction: column; gap: 8px;
+    }
   </style>
 </head>
 <body>
@@ -134,7 +139,7 @@
       <div class="header-icon">🏥</div>
       <div>
         <h2 style="margin:0; font-size: 1.3rem;">Pollyben Medical Kitty</h2>
-        <span class="sync-badge">🟢 Realtime Live Sync Active</span>
+        <span class="sync-badge">🟢 Realtime & Offline Persistence Active</span>
       </div>
     </div>
   </div>
@@ -164,6 +169,19 @@
     <div class="legend">
       <span>🔴 Claims Paid: <strong id="claimPct">0%</strong></span>
       <span>🟢 Available Reserve: <strong id="reservePct">100%</strong></span>
+    </div>
+  </div>
+
+  <!-- SMS Parser Section -->
+  <div class="card">
+    <h3 style="margin-top: 0; font-size: 1.1rem;">📲 Import Entry from SMS Text</h3>
+    <div class="sms-box">
+      <textarea id="smsInput" rows="3" placeholder="Paste raw M-Pesa / SMS text here (e.g. 'SAB1234567 Confirmed. You have received Ksh2,500.00 from JOHN DOE...')"></textarea>
+      <div style="display: flex; gap: 8px;">
+        <button class="btn btn-primary" style="flex: 1;" onclick="parseAndLogSMS()">⚡ Parse & Add Entry</button>
+        <button class="btn btn-outline" onclick="document.getElementById('smsFileInput').click()">📁 Import .txt File</button>
+      </div>
+      <input type="file" id="smsFileInput" accept=".txt" style="display:none;" onchange="importSMSFile(event)">
     </div>
   </div>
 
@@ -259,18 +277,27 @@
     firebase.initializeApp(firebaseConfig);
     const db = firebase.firestore();
 
-    // FORCE DIRECT LIVE NETWORK SYNC (DISABLE STALE PERSISTENT CACHE)
+    // FIRESTORE OFFLINE PERSISTENCE FLAGS
     db.settings({
-      host: "firestore.googleapis.com",
-      ssl: true,
       cacheSizeBytes: firebase.firestore.CACHE_SIZE_UNLIMITED
     });
+
+    // ENABLE MULTI-TAB & MOBILE HYBRID PERSISTENCE
+    firebase.firestore().enablePersistence({ synchronizeTabs: true })
+      .then(() => console.log("Offline persistence enabled."))
+      .catch(err => {
+        if (err.code == 'failed-precondition') {
+          console.warn('Multiple tabs open, persistence enabled in first tab only.');
+        } else if (err.code == 'unimplemented') {
+          console.warn('The current browser does not support offline persistence.');
+        }
+      });
 
     const collectionRef = db.collection("medical_kitty");
     const form = document.getElementById('kittyForm');
     let localRecords = [];
 
-    // REAL-TIME LISTENER (FORCES DIRECT SERVER SYNC)
+    // REAL-TIME LISTENER WITH OFFLINE CACHE SYNC
     collectionRef.orderBy("date", "desc").onSnapshot({ includeMetadataChanges: true }, snapshot => {
       localRecords = [];
       const tbody = document.getElementById('ledgerBody');
@@ -283,7 +310,6 @@
         const r = { id: doc.id, ...doc.data() };
         localRecords.push(r);
 
-        // Normalize potential field casing variations
         const amount = parseFloat(r.amount || r.Amount || 0);
         const type = (r.type || r.Type || '').toLowerCase();
         const person = r.person || r.Person || 'Unknown';
@@ -332,6 +358,90 @@
       console.error("Firestore error:", error);
       document.getElementById('summaryBox').innerText = "Database connection error. Ensure Firestore rules allow read/write.";
     });
+
+    // SMS PARSER ENGINE
+    async function parseAndLogSMS() {
+      const text = document.getElementById('smsInput').value.trim();
+      if (!text) return alert("Please paste an SMS text first.");
+
+      const result = extractDataFromSMS(text);
+      if (!result.amount) return alert("Could not extract a valid amount from the SMS text.");
+
+      await collectionRef.add({
+        date: new Date().toISOString(),
+        type: result.type,
+        person: result.person,
+        amount: result.amount,
+        note: result.note,
+        receipt: null
+      });
+
+      document.getElementById('smsInput').value = '';
+      alert(`Logged: KES ${result.amount.toLocaleString()} [${result.type.toUpperCase()}] - ${result.person}`);
+    }
+
+    function extractDataFromSMS(sms) {
+      let type = 'contribution';
+      let amount = 0;
+      let person = 'SMS Sender';
+      let note = '';
+
+      const refMatch = sms.match(/^([A-Z0-9]{8,12})/i);
+      if (refMatch) note += `Ref: ${refMatch[1]} `;
+
+      if (sms.match(/sent to|paid to|bought|withdraw/i)) {
+        type = 'claim';
+      } else if (sms.match(/received|received from|give|deposited/i)) {
+        type = 'contribution';
+      }
+
+      const amtMatch = sms.match(/(?:Ksh|KES)\s?([\d,]+(?:\.\d{2})?)/i);
+      if (amtMatch) {
+        amount = parseFloat(amtMatch[1].replace(/,/g, ''));
+      }
+
+      const nameMatch = sms.match(/(?:from|to)\s+([A-Z\s]{3,30})(?=\s+\d|\s+on|\s+at|\.|\$)/i);
+      if (nameMatch) {
+        person = nameMatch[1].trim();
+      }
+
+      return { type, amount, person, note: note.trim() || 'SMS Import' };
+    }
+
+    function importSMSFile(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = async function(e) {
+        const lines = e.target.result.split('\n');
+        const batch = db.batch();
+        let count = 0;
+
+        lines.forEach(line => {
+          if (line.trim().length > 10) {
+            const res = extractDataFromSMS(line);
+            if (res.amount > 0) {
+              const docRef = collectionRef.doc();
+              batch.set(docRef, {
+                date: new Date().toISOString(),
+                type: res.type,
+                person: res.person,
+                amount: res.amount,
+                note: res.note,
+                receipt: null
+              });
+              count++;
+            }
+          }
+        });
+
+        if (count > 0) {
+          await batch.commit();
+          alert(`Successfully parsed and imported ${count} entries from SMS log!`);
+        }
+      };
+      reader.readAsText(file);
+    }
 
     // Save or Update Entry
     form.addEventListener('submit', async (e) => {
